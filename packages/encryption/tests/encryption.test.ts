@@ -12,6 +12,22 @@ import * as sha2Hash from '../src/sha2Hash'
 import * as hmacSha256 from '../src/hmacSha256'
 import * as ripemd160 from '../src/hashRipemd160'
 import BN from 'bn.js'
+// Offload  bitcoinjs/bip39 but verify the compatibility with @scure/bip39
+// Using these imports to verify the compatibility bitcoinjs/bip39 <=> @scure/bip39
+import {
+  validateMnemonic as validateMnemonicBip39,
+  mnemonicToEntropy as mnemonicToEntropyBip39,
+  entropyToMnemonic as entropyToMnemonicBip39
+} from 'bip39';
+// https://github.com/paulmillr/scure-bip39
+// Secure, audited & minimal implementation of BIP39 mnemonic phrases.
+import { validateMnemonic, mnemonicToEntropy, entropyToMnemonic } from '@scure/bip39';
+// Word lists not imported by default as that would increase bundle sizes too much as in case of bitcoinjs/bip39
+// Use default english world list similiar to bitcoinjs/bip39
+// Backward compatible with bitcoinjs/bip39 dependency
+// Very small in size as compared to bitcoinjs/bip39 wordlist
+// Reference: https://github.com/paulmillr/scure-bip39
+import { wordlist } from '@scure/bip39/wordlists/english';
 import { getBufferFromBN } from '../src/ec'
 
 const privateKey = 'a5c61c6ca7b3e7e55edee68566aeab22e4da26baa285c7bd10e8d2218aa3b229'
@@ -550,4 +566,43 @@ test('encryptMnemonic & decryptMnemonic', async () => {
 
   expect(errorCallback).toHaveBeenCalledTimes(2)
 })
+
+test('Verify compatibility @scure/bip39 <=> bitcoinjs/bip39', () => {
+  // Consider an entropy
+  const entropy = '00000000000000000000000000000000';
+  // Consider same entropy in array format
+  const entropyUint8Array = new Uint8Array(entropy.split('').map(Number));
+
+  // entropyToMnemonicBip39 imported from bitcoinjs/bip39
+  const bip39Mnemonic = entropyToMnemonicBip39(entropy);
+  // entropyToMnemonic imported from @scure/bip39
+  const mnemonic = entropyToMnemonic(entropyUint8Array, wordlist);
+
+  //Phase 1: Cross verify mnemonic validity: @scure/bip39 <=> bitcoinjs/bip39
+
+  // validateMnemonic imported from @scure/bip39
+  expect(validateMnemonic(bip39Mnemonic, wordlist)).toEqual(true);
+  // validateMnemonicBip39 imported from bitcoinjs/bip39
+  expect(validateMnemonicBip39(mnemonic)).toEqual(true);
+
+  // validateMnemonic imported from @scure/bip39
+  expect(validateMnemonic(mnemonic, wordlist)).toEqual(true);
+  // validateMnemonicBip39 imported from bitcoinjs/bip39
+  expect(validateMnemonicBip39(bip39Mnemonic)).toEqual(true);
+
+  //Phase 2: Get back entropy from mnemonic and verify @scure/bip39 <=> bitcoinjs/bip39
+
+  // mnemonicToEntropy imported from @scure/bip39
+  expect(mnemonicToEntropy(mnemonic, wordlist)).toEqual(entropyUint8Array);
+  // mnemonicToEntropyBip39 imported from bitcoinjs/bip39
+  expect(mnemonicToEntropyBip39(bip39Mnemonic)).toEqual(entropy);
+  // mnemonicToEntropy imported from @scure/bip39
+  expect(Buffer.from(mnemonicToEntropy(bip39Mnemonic, wordlist)).toString('hex')).toEqual(entropy);
+  // mnemonicToEntropyBip39 imported from bitcoinjs/bip39
+  const entropy64Byte = mnemonicToEntropyBip39(mnemonic);
+  // Convert entropy to 32 byte due to 24 words mnemonic
+  const entropy32Byte = new Uint8Array(entropy64Byte.split('').filter((_, i) => i % 2 !== 0).map(Number))
+  // entropy should match with entropyUint8Array
+  expect(entropy32Byte).toEqual(entropyUint8Array);
+});
 
