@@ -1,4 +1,4 @@
-import { Buffer } from '@stacks/common';
+import {Buffer, fetchPrivate} from '@stacks/common';
 import * as blockstack from 'blockstack';
 import * as bitcoin from 'bitcoinjs-lib';
 import * as process from 'process';
@@ -315,6 +315,95 @@ async function getStacksWalletKey(network: CLINetworkAdapter, args: string[]): P
   const keyInfo: StacksKeyInfoType[] = [];
   keyInfo.push(keyObj);
   return JSONStringify(keyInfo);
+}
+
+/*
+ * args:
+ * @mnemonic (string) the 12-word phrase to retrieve the privateKey & address
+ */
+async function migrateBNSDomains(network: CLINetworkAdapter, args: string[]): Promise<string> {
+
+  // Step 1.1: Find user's key and by data-key-derived addresses from mnemonic input
+
+  // Decrypt the mnemonic input given by user
+  let mnemonic: string = await getBackupPhrase(args[0]); // args[0] is the cli argument
+
+  // Reference: DATA_DERIVATION_PATH Taken from:
+  // https://github.com/hirosystems/stacks.js/blob/8e979eb4def0ab73dbe284b6cbd412de539b4d48/packages/wallet-sdk/src/derive.ts#L12
+  const DATA_DERIVATION_PATH = `m/888'/0'`; // Todo: Move to constants
+
+  // Move the detected domains at the address derived from wallet-key-derived addresses by position
+  const WALLET_CONFIG_PATH = `m/44/5757'/0'/1`; // Todo: Move to constants
+  // https://github.com/hirosystems/stacks.js/blob/8e979eb4def0ab73dbe284b6cbd412de539b4d48/packages/wallet-sdk/src/derive.ts#L13
+
+  // Questions:
+  // 1. Is above DATA_DERIVATION_PATH is correct ?
+  // 2. Do we need to consider any other derivation paths to generate multiple addresses to check legacy bns domains that needs to be migrated ?
+  // 3. Is WALLET_CONFIG_PATH  correct for deriving the destination address where bns domain needs to be moved ?
+
+  // Get the user key and address at this DATA_DERIVATION_PATH
+  const dataKeyInfo = await getStacksWalletKeyInfo(network, mnemonic, DATA_DERIVATION_PATH);
+  const walletKeyInfo = await getStacksWalletKeyInfo(network, mnemonic, WALLET_CONFIG_PATH);
+
+  // Step 1.2: Detects whether there are any subdomains registered
+  // Example request url: https://stacks-node-api.mainnet.stacks.co/v1/addresses/stacks/SP31C1RGYVJVWNYWJNRVSZQA2XN9HDEA08FB0G03S
+  const coreNode = 'https://stacks-node-api.mainnet.stacks.co' // Todo: Use from network
+
+  // Get existing subdomains for data key address ?
+  // Question: Is ,this is the correct way to get subdomains from this api or is there any other way to get only subdomains like from registrar ..etc ?
+  const namesResponse = await fetch(`${coreNode}/v1/addresses/stacks/${dataKeyInfo.address}`);
+  const namesJson = await namesResponse.json();
+
+  if ((namesJson.names.length || 0) > 0) {
+
+    for (const subDomain of namesJson.names) {
+      // Found domains
+      // Now ask user to migrate the subDomain one by one in loop
+
+      // Step 2: Prompts the user to confirm whether they want to migrate these subdomains to the corresponding wallet-key-derived addresses for their key by position
+      const confirm = await prompt([ {
+          name: `Do you want to migrate the domain: ${subDomain}`,
+          type: 'confirm'
+        }
+      ]);
+
+      if (!confirm) continue;
+
+      // User want to migrate the subdomain
+      // Call registrar api to transfer the domain to the address coming from console.log(walletKeyInfo.address)
+
+      // Todo: // This is a supposed migration api request
+      const options = {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          // Todo: These are supposed parameter that needs to be refined.
+          subDomain: subDomain,
+          transferToAddress: walletKeyInfo.address,
+          ownerAddresss: dataKeyInfo.address,
+          // May be send owner public key as well
+          // Todo / Question: Figure out to may be send owner public key or some kind of token to verify that only owner can execute this migration request
+          // Verification will be done on registrar side but here needs to figure out params
+        })
+      };
+
+      const migrationURL = 'https://registrar.stacks.co/migrate-subdomain'; // Todo: // Required API call
+      const response = await fetchPrivate(migrationURL, options);
+
+      if (response.ok) {
+        const tx = await response.json();
+        console.log('Tx Result: ', tx);
+        // Show message that transaction will take some time to complete
+        // Continue to next domain in loop
+      } else {
+        // Todo: Migration api call should verify that only owner can execute this api call ?
+        // Todo:  May be migrate api should detect the collision before migration and return error message ?
+        // Todo:  Alerts the user to any subdomains that can't be migrated to these wallet-key-derived addresses given collision with existing usernames owned by them
+        throw Error(`Failed to migrate: ${response}`);
+      }
+    }
+  }
+  return 'Done';
 }
 
 /*
@@ -1836,6 +1925,7 @@ const COMMANDS: Record<string, CommandFunction> = {
   tx_preorder: preorder,
   send_tokens: sendTokens,
   stack: stack,
+  migrate_subdomain: migrateBNSDomains,
   stacking_status: stackingStatus,
   faucet: faucetCall,
 };
