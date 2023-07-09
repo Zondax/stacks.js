@@ -55,7 +55,7 @@
     "eslint-config-prettier": "^8.3.0",
     "eslint-plugin-import": "^2.25.4",
     "eslint-plugin-node": "^11.1.0",
-    "lerna": "^4.0.0",
+    "lerna": "^7.1.1",
     "madge": "^5.0.1",
     "path-browserify": "^1.0.1",
     "prettier": "^2.5.1",
